@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.1.0 FATAL_ERROR)
+project( conv )
+find_package( OpenCV REQUIRED )
+aux_source_directory( src/. src_list )
+add_executable( conv ${src_list} )
+target_compile_features(conv PRIVATE cxx_range_for)
+target_link_libraries (conv ${OpenCV_LIBS})

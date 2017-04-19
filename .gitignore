@@ -1,0 +1,9 @@
+CMakeCache.txt
+Makefile
+CMakeFiles
+cmake_install.cmake
+config.txt
+
+#binaries
+conv
+ConvNet
