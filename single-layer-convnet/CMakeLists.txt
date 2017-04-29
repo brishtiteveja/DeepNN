@@ -1,5 +1,22 @@
 cmake_minimum_required(VERSION 3.3)
 project( ConvNet )
 find_package( OpenCV REQUIRED )
+find_package( OpenMP REQUIRED )
+if (OPENMP_FOUND)
+    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+endif()
+find_package( MPI REQUIRED )
+include_directories(${MPI_INCLUDE_PATH})
 add_executable( ConvNet ConvNet )
 target_link_libraries (ConvNet ${OpenCV_LIBS})
+target_link_libraries(ConvNet ${MPI_LIBRARIES})
+if(MPI_COMPILE_FLAGS)
+  set_target_properties(ConvNet PROPERTIES
+    COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
+endif()
+
+if(MPI_LINK_FLAGS)
+  set_target_properties(ConvNet PROPERTIES
+    LINK_FLAGS "${MPI_LINK_FLAGS}")
+endif()

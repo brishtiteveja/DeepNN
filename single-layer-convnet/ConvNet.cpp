@@ -1,18 +1,12 @@
 // ConvNet.cpp
 //
-// Author: Eric Yuan
-// Blog: http://eric-yuan.me
-// You are FREE to use the following code for ANY purpose.
-//
 // A Convolutional Neural Networks hand writing classifier.
 // Using:
-// 1 Conv layer
-// 1 Pooling layer
+// 1 Conv layer // 1 Pooling layer
 // 2 full connected layers
 // 1 softmax regression output
 //
-// To run this code, you should have OpenCV in your computer.
-// Have fun with it ^v^
+//
 
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
@@ -20,6 +14,9 @@
 #include <math.h>
 #include <fstream>
 #include <iostream>
+#include <sys/time.h>
+#include <mpi.h>
+#include <omp.h>
 
 using namespace cv;
 using namespace std;
@@ -43,9 +40,9 @@ using namespace std;
 int NumHiddenNeurons = 200;
 int NumHiddenLayers = 2;
 int nclasses = 10;
-int KernelSize = 13;
-int KernelAmount = 8;
-int PoolingDim = 4;
+int KernelSize = 5;
+int KernelAmount = 6;
+int PoolingDim = 2;
 int batch;
 int Pooling_Methed = POOL_STOCHASTIC;
 
@@ -141,22 +138,24 @@ ReverseInt (int i){
 }
 
 void 
-read_Mnist(string filename, vector<Mat> &vec){
+get_Mnist(string filename, vector<Mat> &vec){
     ifstream file(filename.c_str(), ios::binary);
     if (file.is_open()){
-        int magic_number = 0;
-        int number_of_images = 0;
+        int num_magic = 0;
+        int num_images = 0;
         int n_rows = 0;
         int n_cols = 0;
-        file.read((char*) &magic_number, sizeof(magic_number));
-        magic_number = ReverseInt(magic_number);
-        file.read((char*) &number_of_images,sizeof(number_of_images));
-        number_of_images = ReverseInt(number_of_images);
+        file.read((char*) &num_magic, sizeof(num_magic));
+        num_magic = ReverseInt(num_magic);
+        file.read((char*) &num_images,sizeof(num_images));
+        num_images = ReverseInt(num_images);
         file.read((char*) &n_rows, sizeof(n_rows));
         n_rows = ReverseInt(n_rows);
         file.read((char*) &n_cols, sizeof(n_cols));
         n_cols = ReverseInt(n_cols);
-        for(int i = 0; i < number_of_images; ++i){
+
+    	#pragma omp parallel for
+        for(int i = 0; i < num_images; ++i){
             Mat tpmat = Mat::zeros(n_rows, n_cols, CV_8UC1);
             for(int r = 0; r < n_rows; ++r){
                 for(int c = 0; c < n_cols; ++c){
@@ -171,19 +170,21 @@ read_Mnist(string filename, vector<Mat> &vec){
 }
 
 void 
-read_Mnist_Label(string filename, Mat &mat)
+get_Mnist_Label(string filename, Mat &mat)
 {
     ifstream file(filename.c_str(), ios::binary);
     if (file.is_open()){
-        int magic_number = 0;
-        int number_of_images = 0;
+        int num_magic = 0;
+        int num_images = 0;
         int n_rows = 0;
         int n_cols = 0;
-        file.read((char*) &magic_number, sizeof(magic_number));
-        magic_number = ReverseInt(magic_number);
-        file.read((char*) &number_of_images,sizeof(number_of_images));
-        number_of_images = ReverseInt(number_of_images);
-        for(int i = 0; i < number_of_images; ++i){
+        file.read((char*) &num_magic, sizeof(num_magic));
+        num_magic = ReverseInt(num_magic);
+        file.read((char*) &num_images,sizeof(num_images));
+        num_images = ReverseInt(num_images);
+
+	#pragma omp parallel for
+        for(int i = 0; i < num_images; ++i){
             unsigned char temp = 0;
             file.read((char*) &temp, sizeof(temp));
             mat.ATD(0, i) = (double)temp;
@@ -227,7 +228,6 @@ dReLU(Mat& M){
     return res;
 }
 
-// Mimic rot90() in Matlab/GNU Octave.
 Mat 
 rot90(Mat &M, int k){
     Mat res;
@@ -241,8 +241,6 @@ rot90(Mat &M, int k){
 }
 
 
-// A Matlab/Octave style 2-d convolution function.
-// from http://blog.timmlinder.com/2011/07/opencv-equivalent-to-matlabs-conv2-function/
 Mat 
 conv2(Mat &img, Mat &kernel, int convtype) {
     Mat dest;
@@ -389,13 +387,15 @@ weightRandomInit(ConvK &convk, int width){
     double epsilon = 0.1;
     convk.W = Mat::ones(width, width, CV_64FC1);
     double *pData; 
+	#pragma omp parallel for
     for(int i = 0; i<convk.W.rows; i++){
         pData = convk.W.ptr<double>(i);
+		#pragma omp parallel for
         for(int j=0; j<convk.W.cols; j++){
             pData[j] = randu<double>();        
         }
     }
-    convk.W = convk.W * (2 * epsilon) - epsilon;
+    convk.W = convk.W * (2 * epsilon) - epsilon; // trancated normal distribution with small standard deviation would be better
     convk.b = 0;
     convk.Wgrad = Mat::zeros(width, width, CV_64FC1);
     convk.bgrad = 0;
@@ -407,8 +407,10 @@ weightRandomInit(Ntw &ntw, int inputsize, int hiddensize, int nsamples){
     double epsilon = sqrt(6) / sqrt(hiddensize + inputsize + 1);
     double *pData;
     ntw.W = Mat::ones(hiddensize, inputsize, CV_64FC1);
+	#pragma omp parallel for
     for(int i=0; i<hiddensize; i++){
         pData = ntw.W.ptr<double>(i);
+		#pragma omp parallel for
         for(int j=0; j<inputsize; j++){
             pData[j] = randu<double>();
         }
@@ -424,8 +426,10 @@ weightRandomInit(SMR &smr, int nclasses, int nfeatures){
     double epsilon = 0.01;
     smr.Weight = Mat::ones(nclasses, nfeatures, CV_64FC1);
     double *pData; 
+	#pragma omp parallel for
     for(int i = 0; i<smr.Weight.rows; i++){
         pData = smr.Weight.ptr<double>(i);
+		#pragma omp parallel for
         for(int j=0; j<smr.Weight.cols; j++){
             pData[j] = randu<double>();        
         }
@@ -442,6 +446,7 @@ void
 ConvNetInitPrarms(Cvl &cvl, vector<Ntw> &HiddenLayers, SMR &smr, int imgDim, int nsamples){
 
     // Init Conv layers
+	#pragma omp parallel for
     for(int j=0; j<KernelAmount; j++){
         ConvK tmpConvK;
         weightRandomInit(tmpConvK, KernelSize);
@@ -456,6 +461,7 @@ ConvNetInitPrarms(Cvl &cvl, vector<Ntw> &HiddenLayers, SMR &smr, int imgDim, int
     Ntw tpntw;
     weightRandomInit(tpntw, hiddenfeatures, NumHiddenNeurons, nsamples);
     HiddenLayers.push_back(tpntw);
+	#pragma omp parallel for
     for(int i=1; i<NumHiddenLayers; i++){
         Ntw tpntw2;
         weightRandomInit(tpntw2, NumHiddenNeurons, NumHiddenNeurons, nsamples);
@@ -482,6 +488,7 @@ getNetworkCost(vector<Mat> &x, Mat &y, Cvl &cvl, vector<Ntw> &hLayers, SMR &smr,
     vector<vector<Mat> > Conv1st;
     vector<vector<Mat> > Pool1st;
     vector<vector<vector<Point> > > PoolLoc;
+
     for(int k=0; k<nsamples; k++){
         vector<Mat> tpConv1st;
         vector<Mat> tpPool1st;
@@ -611,7 +618,10 @@ gradientChecking(Cvl &cvl, vector<Ntw> &hLayers, SMR &smr, vector<Mat> &x, Mat &
     Mat grad(cvl.layer[0].Wgrad);
     cout<<"test network !!!!"<<endl;
     double epsilon = 1e-4;
+	
+	#pragma omp parallel for
     for(int i=0; i<cvl.layer[0].W.rows; i++){
+		#pragma omp parallel
         for(int j=0; j<cvl.layer[0].W.cols; j++){
             double memo = cvl.layer[0].W.ATD(i, j);
             cvl.layer[0].W.ATD(i, j) = memo + epsilon;
@@ -633,11 +643,11 @@ trainNetwork(vector<Mat> &x, Mat &y, Cvl &cvl, vector<Ntw> &HiddenLayers, SMR &s
     if (G_CHECKING){
         gradientChecking(cvl, HiddenLayers, smr, x, y, lambda);
     }else{
-        int converge = 0;
+        int step = 0;
         double lastcost = 0.0;
         //double lrate = getLearningRate(x);
         cout<<"Network Learning, trained learning rate: "<<lrate<<endl;
-        while(converge < MaxIter){
+        for(int step = 0; step < MaxIter; step++){
 
             int randomNum = ((long)rand() + (long)rand()) % (x.size() - batch);
             vector<Mat> batchX;
@@ -649,8 +659,8 @@ trainNetwork(vector<Mat> &x, Mat &y, Cvl &cvl, vector<Ntw> &HiddenLayers, SMR &s
 
             getNetworkCost(batchX, batchY, cvl, HiddenLayers, smr, lambda);
 
-            cout<<"learning step: "<<converge<<", Cost function value = "<<smr.cost<<", randomNum = "<<randomNum<<endl;
-            if(fabs((smr.cost - lastcost) / smr.cost) <= 1e-7 && converge > 0) break;
+            cout<<"learning step: "<<step<<", Cost function value = "<<smr.cost<<", randomNum = "<<randomNum<<endl;
+            if(fabs((smr.cost - lastcost) / smr.cost) <= 1e-7 && step > 0) break;
             if(smr.cost <= 0) break;
             lastcost = smr.cost;
             smr.Weight -= lrate * smr.Wgrad;
@@ -663,23 +673,25 @@ trainNetwork(vector<Mat> &x, Mat &y, Cvl &cvl, vector<Ntw> &HiddenLayers, SMR &s
                 cvl.layer[i].W -= lrate * cvl.layer[i].Wgrad;
                 cvl.layer[i].b -= lrate * cvl.layer[i].bgrad;
             }
-            ++ converge;
         }
         
     }
 }
 
 void
-readData(vector<Mat> &x, Mat &y, string xpath, string ypath, int number_of_images){
-
+getData(vector<Mat> &x, Mat &y, string xpath, string ypath, int num_images, bool train=true){
     //read MNIST iamge into OpenCV Mat vector
-    read_Mnist(xpath, x);
+    get_Mnist(xpath, x);
+
+    #pragma omp parallel for
     for(int i=0; i<x.size(); i++){
         x[i].convertTo(x[i], CV_64FC1, 1.0/255, 0);
     }
+
     //read MNIST label into double vector
-    y = Mat::zeros(1, number_of_images, CV_64FC1);
-    read_Mnist_Label(ypath, y);
+    y = Mat::zeros(1, num_images, CV_64FC1);
+
+    get_Mnist_Label(ypath, y);
 }
 
 Mat 
@@ -762,60 +774,176 @@ saveWeight(Mat &M, string s){
     fclose(pOut);
 }
 
+const int MAXBYTES=1024*1024*1024;
+uchar buffer[MAXBYTES];
+
+void matsnd(Mat& m,int dest){
+      int rows  = m.rows;
+      int cols  = m.cols;
+      int type  = m.type();
+      int channels = m.channels();
+      memcpy(&buffer[0 * sizeof(int)],(uchar*)&rows,sizeof(int));
+      memcpy(&buffer[1 * sizeof(int)],(uchar*)&cols,sizeof(int));
+      memcpy(&buffer[2 * sizeof(int)],(uchar*)&type,sizeof(int));
+
+      int bytespersample=1; // change if using shorts or floats
+      int bytes=m.rows*m.cols*channels*bytespersample;
+
+      if(!m.isContinuous())
+      { 
+         m = m.clone();
+      }
+      memcpy(&buffer[3*sizeof(int)],m.data,bytes);
+      MPI_Send(&buffer,bytes+3*sizeof(int),MPI_UNSIGNED_CHAR,dest,0,MPI_COMM_WORLD);
+}
+
+void matbcast(Mat& m, int rank){
+      int rows  = m.rows;
+      int cols  = m.cols;
+      int type  = m.type();
+      int channels = m.channels();
+      memcpy(&buffer[0 * sizeof(int)],(uchar*)&rows,sizeof(int));
+      memcpy(&buffer[1 * sizeof(int)],(uchar*)&cols,sizeof(int));
+      memcpy(&buffer[2 * sizeof(int)],(uchar*)&type,sizeof(int));
+
+      int bytespersample=1; // change if using shorts or floats
+      int bytes=m.rows*m.cols*channels*bytespersample;
+
+      if(!m.isContinuous())
+      { 
+         m = m.clone();
+      }
+      memcpy(&buffer[3*sizeof(int)],m.data,bytes);
+      MPI_Bcast(&buffer,bytes+3*sizeof(int),MPI_UNSIGNED_CHAR, rank,MPI_COMM_WORLD);
+}
+
+Mat matrecv(int src){
+      MPI_Status status;
+      int count,rows,cols,type,channels;
+
+      MPI_Recv(&buffer,sizeof(buffer),MPI_UNSIGNED_CHAR,src,MPI_ANY_TAG,MPI_COMM_WORLD,&status);
+      MPI_Get_count(&status,MPI_UNSIGNED_CHAR,&count);
+      memcpy((uchar*)&rows,&buffer[0 * sizeof(int)], sizeof(int));
+      memcpy((uchar*)&cols,&buffer[1 * sizeof(int)], sizeof(int));
+      memcpy((uchar*)&type,&buffer[2 * sizeof(int)], sizeof(int));
+
+      // Make the mat
+      Mat received= Mat(rows,cols,type,(uchar*)&buffer[3*sizeof(int)]);
+      return received;
+}
+
 int 
 main(int argc, char** argv)
 {
+	MPI_Status status;
+	int rank, wsize, mpisupport;
+
+	MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &mpisupport);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	MPI_Comm_size(MPI_COMM_WORLD, &wsize);
+
     long start, end;
     start = clock();
 
     vector<Mat> trainX;
     vector<Mat> testX;
     Mat trainY, testY;
-    readData(trainX, trainY, "mnist/train-images-idx3-ubyte", "mnist/train-labels-idx1-ubyte", 60000);
-    readData(testX, testY, "mnist/t10k-images-idx3-ubyte", "mnist/t10k-labels-idx1-ubyte", 10000);
 
-    cout<<"Read trainX successfully, including "<<trainX[0].cols * trainX[0].rows<<" features and "<<trainX.size()<<" samples."<<endl;
-    cout<<"Read trainY successfully, including "<<trainY.cols<<" samples"<<endl;
-    cout<<"Read testX successfully, including "<<testX[0].cols * testX[0].rows<<" features and "<<testX.size()<<" samples."<<endl;
-    cout<<"Read testY successfully, including "<<testY.cols<<" samples"<<endl;
+    int thread_id=-1;
+    struct timeval start_d, end_d;
 
-    int nfeatures = trainX[0].rows * trainX[0].cols;
-    int imgDim = trainX[0].rows;
-    int nsamples = trainX.size();
-    Cvl cvl;
-    vector<Ntw> HiddenLayers;
-    SMR smr;
 
-    ConvNetInitPrarms(cvl, HiddenLayers, smr, imgDim, nsamples);
-    // Train network using Back Propogation
-    batch = nsamples / 100;
-    Mat tpX = concatenateMat(trainX);
-    double lrate = getLearningRate(tpX);
-    cout<<"lrate = "<<lrate<<endl;
-    trainNetwork(trainX, trainY, cvl, HiddenLayers, smr, 3e-3, MaxItr, lrate);
-
-    if(! G_CHECKING){
-        // Save the trained kernels, you can load them into Matlab/GNU Octave to see what are they look like.
-        saveWeight(cvl.layer[0].W, "w0");
-        saveWeight(cvl.layer[1].W, "w1");
-        saveWeight(cvl.layer[2].W, "w2");
-        saveWeight(cvl.layer[3].W, "w3");
-        saveWeight(cvl.layer[4].W, "w4");
-        saveWeight(cvl.layer[5].W, "w5");
-        saveWeight(cvl.layer[6].W, "w6");
-        saveWeight(cvl.layer[7].W, "w7");
-
-        // Test use test set
-        Mat result = resultProdict(testX, cvl, HiddenLayers, smr, 3e-3);
-        Mat err(testY);
-        err -= result;
-        int correct = err.cols;
-        for(int i=0; i<err.cols; i++){
-            if(err.ATD(0, i) != 0) --correct;
+	if (rank == 0) {
+        #pragma omp parallel  
+        {
+        	thread_id = omp_get_thread_num();
+    		#pragma omp master 
+    		{
+    			int num_threads = omp_get_num_threads();
+    			int max_threads = omp_get_max_threads();
+    			int num_procs = omp_get_num_procs();
+    
+    			// starting time for data reading
+               	gettimeofday(&start_d, NULL);
+    			cout << "Max Threads = " << max_threads << endl;
+    			cout << "Number of Processes = " << num_procs << endl;
+    		}
+    
+    		#pragma omp sections
+    		{
+            	#pragma omp section
+        		{
+            		getData(trainX, trainY, "mnist/train-images-idx3-ubyte", "mnist/train-labels-idx1-ubyte", 60000);
+            		cout<<"Read trainX successfully, including "<<trainX[0].cols * trainX[0].rows<<" features and "<<trainX.size()<<" samples."<<endl;
+            		cout<<"Read trainY successfully, including "<<trainY.cols<<" samples"<<endl;
+        
+        		}
+        	
+        		#pragma omp section
+        		{
+            		getData(testX, testY, "mnist/t10k-images-idx3-ubyte", "mnist/t10k-labels-idx1-ubyte", 10000, false);
+            		cout<<"Read testX successfully, including "<<testX[0].cols * testX[0].rows<<" features and "<<testX.size()<<" samples."<<endl;
+            		cout<<"Read testY successfully, including "<<testY.cols<<" samples"<<endl;
+        		}
+    		}
         }
-        cout<<"correct: "<<correct<<", total: "<<err.cols<<", accuracy: "<<double(correct) / (double)(err.cols)<<endl;
-    }    
-    end = clock();
-    cout<<"Totally used time: "<<((double)(end - start)) / CLOCKS_PER_SEC<<" second"<<endl;
+    
+    	#pragma omp barrier
+    	{
+    		#pragma omp master 
+    		{
+        		gettimeofday(&end_d, NULL);
+        		printf("Time spent to read data = %.3lf s\n\n", (end_d.tv_sec - start_d.tv_sec) 
+    				+ (end_d.tv_usec - start_d.tv_usec)/1000000.0);
+    		}
+    	}
+	} else {
+
+	}
+
+	if (rank == 0) {
+		cout << "Proc No. " << rank << endl;
+    	int nfeatures = trainX[0].rows * trainX[0].cols;
+    	int imgDim = trainX[0].rows;
+    	int nsamples = trainX.size();
+    	Cvl cvl;
+    	vector<Ntw> HiddenLayers;
+    	SMR smr;
+
+    	ConvNetInitPrarms(cvl, HiddenLayers, smr, imgDim, nsamples);
+    	// Train network using Back Propogation
+    	batch = nsamples / 100;
+    	Mat tpX = concatenateMat(trainX);
+    	double lrate = getLearningRate(tpX);
+    	cout<<"lrate = "<<lrate<<endl;
+    	trainNetwork(trainX, trainY, cvl, HiddenLayers, smr, 3e-3, MaxItr, lrate);
+
+    	if(! G_CHECKING){
+        	// Save the trained kernels, you can load them into Matlab/GNU Octave to see what are they look like.
+        	saveWeight(cvl.layer[0].W, "w0");
+        	saveWeight(cvl.layer[1].W, "w1");
+        	saveWeight(cvl.layer[2].W, "w2");
+        	saveWeight(cvl.layer[3].W, "w3");
+        	saveWeight(cvl.layer[4].W, "w4");
+        	saveWeight(cvl.layer[5].W, "w5");
+        	saveWeight(cvl.layer[6].W, "w6");
+        	saveWeight(cvl.layer[7].W, "w7");
+
+        	// Test use test set
+        	Mat result = resultProdict(testX, cvl, HiddenLayers, smr, 3e-3);
+        	Mat err(testY);
+        	err -= result;
+        	int correct = err.cols;
+        	for(int i=0; i<err.cols; i++){
+            	if(err.ATD(0, i) != 0) --correct;
+        	}
+        	cout<<"correct: "<<correct<<", total: "<<err.cols<<", accuracy: "<<double(correct) / (double)(err.cols)<<endl;
+    	}    
+    	end = clock();
+    	cout<<"Totally used time: "<<((double)(end - start)) / CLOCKS_PER_SEC<<" second"<<endl;
+	} else {
+	}
+	MPI_Finalize();
+
     return 0;
 }
